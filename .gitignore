@@ -1,0 +1,26 @@
+# Environnement Python
+venv/
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Secrets et configuration locale
+.env
+.env.*
+!.env.example
+
+# Base de données locale et fichiers envoyés par les utilisateurs
+*.sqlite3
+media/
+staticfiles/
+
+# Sauvegardes et scripts temporaires de développement
+*.avant_*
+*.bak
+installer_*.py
+
+# Éditeurs et système
+.vscode/
+.idea/
+.DS_Store
