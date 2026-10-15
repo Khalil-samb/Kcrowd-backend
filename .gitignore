@@ -24,3 +24,6 @@ installer_*.py
 .vscode/
 .idea/
 .DS_Store
+
+# Script SQL local (contient un mot de passe de base de données)
+setup_db.sql
