@@ -27,6 +27,7 @@ from accounts.permissions import IsOrganizer
 from .availability import recalculer_statut_complet
 from .lifecycle import terminer_les_evenements_passes
 from .models import Event, TicketType
+from .jauge import verifier_jauge
 from .serializers import (
     EventCreateSerializer,
     EventDetailSerializer,
@@ -179,6 +180,10 @@ class OrganizerEventDetailView(generics.RetrieveUpdateAPIView):
         # accord avec le stock réel — ce qui corrige aussi un événement resté
         # bloqué en « Complet » alors qu'il reste des places.
         evenement = serializer.save()
+        # Un événement marqué « terminé » dont la date de fin est repoussée dans le futur redevient en ligne
+        if evenement.status == 'finished' and evenement.end_date and evenement.end_date > timezone.now():
+            evenement.status = 'published'
+            evenement.save(update_fields=['status'])
         recalculer_statut_complet(evenement)
 
 
@@ -199,7 +204,11 @@ class OrganizerTicketTypeListCreateView(generics.ListCreateAPIView):
 
     def perform_create(self, serializer):
         event = get_object_or_404(Event, id=self.kwargs['event_id'], organizer=self.request.user.organizer)
-        serializer.save(event=event)
+        with transaction.atomic():
+            # On verrouille l'événement : deux ajouts simultanés ne peuvent pas dépasser la jauge à deux.
+            event = Event.objects.select_for_update().get(pk=event.pk)
+            verifier_jauge(event, serializer.validated_data['quantity_total'])
+            serializer.save(event=event)
         # Ajouter une catégorie avec des places rouvre un événement « Complet »
         recalculer_statut_complet(event)
 
@@ -236,6 +245,12 @@ class OrganizerTicketTypeDetailView(generics.RetrieveUpdateDestroyAPIView):
                 raise ValidationError({
                     'quantity_total': f"La quantité totale ne peut pas être inférieure aux {verrouille.quantity_sold} billets déjà vendus."
                 })
+            verifier_jauge(
+                Event.objects.select_for_update().get(pk=verrouille.event_id),
+                nouvelle_quantite,
+                ancienne_quantite=verrouille.quantity_total,
+                exclure_pk=verrouille.pk,
+            )
             serializer.instance = verrouille
             serializer.save()
             recalculer_statut_complet(verrouille.event)
