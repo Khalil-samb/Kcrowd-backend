@@ -165,12 +165,40 @@ class MesBilletsView(generics.ListAPIView):
         return Ticket.objects.filter(user=self.request.user).order_by('-purchase_date')
 
 
+def _details_scan(billet):
+    """Ce que l'écran du scanner affiche en plus du verdict (le téléphone est masqué)."""
+    telephone = billet.user.phone or ''
+    masque = telephone[:2] + '•••' + telephone[-2:] if len(telephone) >= 6 else telephone
+    porte = billet.gate
+    agent = billet.scanned_by_agent
+    return {
+        'acheteur': f"{billet.user.first_name} {billet.user.last_name or ''}".strip(),
+        'telephone': masque,
+        'categorie': billet.ticket_type.name,
+        'evenement': billet.event.title,
+        'prix': billet.price,
+        'date_achat': billet.purchase_date,
+        'scanne_le': billet.scanned_at,
+        'porte': (getattr(porte, 'label', None) or getattr(porte, 'name', None)) if porte else None,
+        'agent': getattr(agent, 'name', None) if agent else None,
+        'reference': str(billet.id).replace('-', '')[-8:].upper(),
+    }
+
+
+# --- imports du scanner ---
+from django.db import transaction
+from django.db.models import CharField
+from django.db.models.functions import Cast
+from django.utils import timezone
+
+
 class ScannerBilletView(APIView):
     """
     POST /api/tickets/scan/
     Corps attendu : { "qr_code": "QR-..." } (scan caméra)
                  OU { "reference": "A1B2C3D4" } (saisie manuelle de secours,
                      les 8 derniers caractères de l'id du billet)
+    Réponse : le verdict (statut, message) + « details » : acheteur, catégorie, date d'achat, premier scan…
     """
     permission_classes = [IsOrganizer]
 
@@ -182,18 +210,12 @@ class ScannerBilletView(APIView):
         billet = None
 
         if donnees.get('qr_code'):
-            # Cas normal : la caméra a lu un QR Code, on cherche une
-            # correspondance EXACTE sur ce texte.
+            # Cas normal : la caméra a lu un QR Code, correspondance EXACTE sur ce texte.
             billet = Ticket.objects.filter(qr_code=donnees['qr_code']).first()
 
         elif donnees.get('reference'):
-            # Cas de secours : recherche par les derniers caractères de
-            # l'id. Comme l'id est un UUID (pas du texte par défaut en
-            # base), Cast(...) le convertit temporairement en texte pour
-            # pouvoir utiliser __iendswith (comparaison "se termine par",
-            # insensible à la casse).
-            # Le code de secours = exactement 8 caractères (les 8 derniers de l'identifiant du billet),
-            # cherché UNIQUEMENT parmi les billets des événements de cet organisateur.
+            # Cas de secours : les 8 derniers caractères de l'id (UUID converti en texte pour __iendswith),
+            # cherchés UNIQUEMENT parmi les billets des événements de cet organisateur.
             reference = str(donnees['reference']).strip().replace('-', '')
             if len(reference) == 8:
                 billet = (
@@ -208,20 +230,40 @@ class ScannerBilletView(APIView):
         if billet.event.organizer != request.user.organizer:
             return Response({'erreur': "Ce billet n'appartient pas à un de vos événements."}, status=status.HTTP_403_FORBIDDEN)
 
-        if billet.status == 'used':
-            return Response({'statut': 'doublon', 'message': 'Ce billet a déjà été scanné.'}, status=status.HTTP_200_OK)
+        # Verrou sur la ligne du billet : deux scans simultanés du même QR ne peuvent pas être tous deux « valides ».
+        with transaction.atomic():
+            billet = Ticket.objects.select_for_update().get(pk=billet.pk)
 
-        if billet.status == 'cancelled':
-            return Response({'statut': 'invalide', 'message': 'Ce billet a été annulé.'}, status=status.HTTP_200_OK)
+            if billet.status == 'used':
+                return Response({
+                    'statut': 'doublon',
+                    'message': 'Ce billet a déjà été scanné.',
+                    'billet': TicketSerializer(billet).data,
+                    'details': _details_scan(billet),
+                }, status=status.HTTP_200_OK)
 
-        billet.status = 'used'
-        billet.scanned_at = timezone.now()
-        gate_id = donnees.get('gate_id')
-        if gate_id:
-            billet.gate = AccessGate.objects.filter(id=gate_id).first()
-        billet.save()
+            if billet.status == 'cancelled':
+                return Response({
+                    'statut': 'invalide',
+                    'message': 'Ce billet a été annulé.',
+                    'billet': TicketSerializer(billet).data,
+                    'details': _details_scan(billet),
+                }, status=status.HTTP_200_OK)
 
-        return Response({'statut': 'valide', 'message': 'Entrée autorisée.', 'billet': TicketSerializer(billet).data})
+            billet.status = 'used'
+            billet.scanned_at = timezone.now()
+            gate_id = donnees.get('gate_id')
+            if gate_id:
+                billet.gate = AccessGate.objects.filter(id=gate_id).first()
+            billet.save()
+
+            return Response({
+                'statut': 'valide',
+                'message': 'Entrée autorisée.',
+                'billet': TicketSerializer(billet).data,
+                'details': _details_scan(billet),
+            })
+
 
 class SignalerLitigeView(APIView):
     """POST /api/tickets/<id>/dispute/ — marque un billet comme litigieux."""
