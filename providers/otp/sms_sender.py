@@ -14,7 +14,7 @@ class SmsOtpSender(OtpSender):
         #
         # response = requests.post(
         #     "https://api.fournisseur-sms.sn/send",
-        #     json={"to": telephone, "message": f"Votre code SamaPass : {code}"},
+        #     json={"to": telephone, "message": f"Votre code Kcrowd : {code}"},
         #     headers={"Authorization": f"Bearer {API_KEY}"},
         # )
         # response.raise_for_status()

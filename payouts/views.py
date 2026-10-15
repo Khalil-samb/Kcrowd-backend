@@ -48,7 +48,7 @@ class DemanderPayoutView(APIView):
         reference = f"{organizer.payment_method.upper()}-PAYOUT-{uuid.uuid4().hex[:8].upper()}"
 
         # Même patron Strategy, cette fois pour de l'argent qui SORT de
-        # SamaPass plutôt que d'y entrer — la même interface sert dans
+        # Kcrowd plutôt que d'y entrer — la même interface sert dans
         # les deux sens.
         resultat = payment_provider.initier_paiement(solde, organizer.payment_method, reference)
 
