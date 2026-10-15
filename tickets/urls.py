@@ -12,3 +12,10 @@ urlpatterns = [
     path('<uuid:pk>/', TicketDetailView.as_view(), name='ticket-detail'),
     path('admin/all/', AdminAllTicketsView.as_view(), name='admin-all-tickets'),
 ]
+
+from .guest import AcheterBilletInviteView, TicketInviteView  # noqa: E402
+
+urlpatterns += [
+    path('purchase/guest/', AcheterBilletInviteView.as_view(), name='purchase-guest'),
+    path('invite/<uuid:pk>/', TicketInviteView.as_view(), name='ticket-invite'),
+]
